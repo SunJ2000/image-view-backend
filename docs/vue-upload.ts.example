@@ -1,0 +1,71 @@
+// npm install ali-oss
+// administratorToken comes from user input at runtime. Never use a VITE_* secret.
+import OSS from 'ali-oss';
+
+export async function uploadFile(file: File, administratorToken: string) {
+  async function api(path: string, body?: unknown) {
+    const response = await fetch(`/api${path}`, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: {
+        Authorization: `Bearer ${administratorToken}`,
+        'Content-Type': 'application/json',
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(JSON.stringify(result.message));
+    return result;
+  }
+  const session = await api('/uploads/init', {
+    fileName: file.name,
+    sizeBytes: file.size,
+    mimeType: file.type || 'application/octet-stream',
+  });
+  if (session.upload.mode === 'signed-put') {
+    // Send the raw File, not FormData. These headers are part of the signature.
+    // Never forward the administrator Authorization header to OSS.
+    const response = await fetch(session.upload.url, {
+      method: session.upload.method,
+      headers: session.upload.headers,
+      body: file,
+    });
+    if (!response.ok) throw new Error(`OSS upload failed (${response.status})`);
+  } else {
+    const client = new OSS({
+      region: session.upload.region,
+      endpoint: session.upload.endpoint,
+      bucket: session.upload.bucket,
+      secure: true,
+      authorizationV4: true,
+      accessKeyId: session.upload.accessKeyId,
+      accessKeySecret: session.upload.accessKeySecret,
+      stsToken: session.upload.stsToken,
+      refreshSTSToken: async () => {
+        const refreshed = await api(
+          `/uploads/${session.file.id}/credentials`,
+          {},
+        );
+        return {
+          accessKeyId: refreshed.upload.accessKeyId,
+          accessKeySecret: refreshed.upload.accessKeySecret,
+          stsToken: refreshed.upload.stsToken,
+        };
+      },
+      refreshSTSTokenInterval: 600000,
+    });
+    // For resumable uploads, persist the checkpoint from progress and pass it back
+    // to multipartUpload on retry. Renew credentials using the same file ID.
+    await client.multipartUpload(session.upload.objectKey, file, {
+      mime: file.type || 'application/octet-stream',
+      headers: session.upload.headers,
+      parallel: 4,
+      partSize: 8 * 1024 * 1024,
+      progress: (percentage: number, checkpoint: unknown) => {
+        console.log('Upload progress:', percentage, checkpoint);
+      },
+    });
+  }
+  const saved = await api(`/uploads/${session.file.id}/complete`, {});
+  const preview = await api(`/files/${saved.id}/preview-url`);
+  return { file: saved, preview };
+}

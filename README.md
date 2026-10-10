@@ -1,114 +1,163 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Image View Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+个人图片、视频和通用文件库后端：NestJS + TypeScript + MySQL + 杭州 OSS。浏览器直传 OSS，后端负责授权、校验及文件信息管理。文件接口使用单个管理 Bearer Token，不包含多用户注册登录。
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## 本地启动
 
-## Description
+建议使用 Node.js 24 LTS、npm、Docker Desktop（Linux 容器模式）。
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
-
-```bash
-$ npm install
+```sh
+npm install
+npm run setup:local
+npm run db:up
+npm run start:dev
 ```
 
-## Compile and run the project
+`setup:local` 在 `.env` 不存在时生成随机管理令牌、数据库密码及 root 密码，不覆盖已有配置，也不打印密钥。查看本地 `.env` 获取 `ADMIN_API_TOKEN`；前端运行时输入，禁止打包进 `VITE_*` 变量。`.env` 已被 Git 和 Docker 构建上下文忽略。
 
-```bash
-# development
-$ npm run start
+- API：`http://localhost:3000/api`
+- 健康检查：`GET /api/health`（无令牌，检查数据库；`ossConfigured` 只表示 OSS 配置齐全，不代表已验证云端权限）
+- 开发接口文档：`http://localhost:3000/api/docs`，Authorize 中输入管理令牌
+- 默认 Vue 开发域名：`http://localhost:5173`，通过 `CORS_ORIGINS` 配置多个域名，以英文逗号分隔
+- 数据库：仅绑定 `127.0.0.1:3306`，数据保存到 Compose 的 `mysql_data` 卷
 
-# watch mode
-$ npm run start:dev
+首次启动自动执行显式数据库迁移，`synchronize` 始终关闭。`npm run db:down` 停止数据库但保留数据；不要执行 `docker compose down -v`，那会删除数据卷。数据库镜像首次初始化后，修改 `.env` 密码不会自动修改已有数据库用户密码。
 
-# production mode
-$ npm run start:prod
+## OSS 配置
+
+在 `.env` 填写：
+
+```dotenv
+OSS_REGION=oss-cn-hangzhou
+OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
+OSS_BUCKET=image-sj
+OSS_ACCESS_KEY_ID=服务端AccessKeyId
+OSS_ACCESS_KEY_SECRET=服务端AccessKeySecret
+OSS_STS_ROLE_ARN=
+UPLOAD_URL_TTL_SECONDS=900
 ```
 
-## Run tests
+**STS 角色不是必填项。** `OSS_STS_ROLE_ARN` 留空时，后端返回单对象 V4 PUT 预签名 URL；浏览器直接向该 URL 上传原始文件。长期凭证只保留在服务端 `.env`，不会向前端返回 AccessKey Secret。签名 URL 默认有效 15 分钟，可通过 `UPLOAD_URL_TTL_SECONDS` 修改。这种模式支持不超过 5 GiB 的单文件上传，不支持分片断点续传。
 
-```bash
-# unit tests
-$ npm run test
+配置角色 ARN 后自动改用 STS，支持 OSS SDK 分片上传和断点续传。OSS 必需的 Bucket 和访问凭证留空时仍可启动数据库、健康检查和文件列表；上传相关接口返回 503。
 
-# e2e tests
-$ npm run test:e2e
+1. 使用杭州地域的私有 Bucket。Bucket 策略不要授予匿名读取，也不要启用阻止本项目管理身份删除文件的保留策略。
+2. 签名直传模式的服务端权限模板见 `docs/oss-signed-upload-policy.json`，包含对象读、写、设置 private ACL、删除和取消分片权限，不需要 `sts:AssumeRole`。
+3. **可选 STS 模式**：创建受信任实体为阿里云账号的 RAM 角色，允许服务端 RAM 用户 AssumeRole。角色授权模板见 `docs/oss-upload-role-policy.json`；服务端用户额外权限见 `docs/oss-server-policy.json`，替换 Bucket、账号 ID 和角色名称。然后设置 `.env` 的 `OSS_STS_ROLE_ARN`。
+4. Bucket CORS：来源填写 `http://localhost:5173` 和正式前端域名；允许 `GET, HEAD, PUT, POST, DELETE`；允许请求头可设为 `*`；暴露 `ETag, x-oss-request-id, Content-Length, Content-Range, Accept-Ranges`。OSS CORS 与后端 `CORS_ORIGINS` 是两处独立配置。
+5. **配置 OSS 生命周期**：对 `staging/` 前缀的对象在 2 天后删除；对 `staging/`、`files/` 的未完成分片建议 2 天后清理。不要对 `files/` 已完成对象设置自动删除规则。第一版建议使用未开启版本控制的独立 Bucket；已开启版本控制时，额外配置非当前版本清理，否则 DeleteObject 不会立即清除历史版本。
 
-# test coverage
-$ npm run test:cov
+签名直传 URL 仅授权对一个精确 staging 对象执行 PUT，Content-Type 也纳入签名。STS 模式的角色权限限定到 `staging/*`，每次会话进一步限定到一个精确对象；不授予 Bucket 列举、文件读取或删除权限。临时凭证默认有效 15 分钟。
+
+官方参考：[Node.js 预签名 URL 上传](https://help.aliyun.com/zh/oss/developer-reference/upload-objects-using-a-signed-url-generated-with-oss-sdk-for-node-js/)、[客户端直传](https://www.alibabacloud.com/help/en/oss/user-guide/uploading-objects-to-oss-directly-from-clients/)、[分片上传权限](https://help.aliyun.com/zh/oss/user-guide/multipart-upload/)。
+
+## 前端接入
+
+所有文件和上传接口都需要：
+
+```http
+Authorization: Bearer <ADMIN_API_TOKEN>
+Content-Type: application/json
 ```
 
-## Deployment
+| 方法 | 路径 | 功能 |
+| --- | --- | --- |
+| POST | `/api/uploads/init` | 创建上传记录，返回签名上传 URL 或 STS 凭证 |
+| POST | `/api/uploads/:id/credentials` | 续期同一待上传文件的签名 URL 或 STS 凭证 |
+| POST | `/api/uploads/:id/complete` | 验证 OSS 对象并入库，重复调用结果一致 |
+| GET | `/api/files` | 分页、名称搜索及类型筛选 |
+| GET | `/api/files/:id` | 文件详情 |
+| GET | `/api/files/:id/preview-url` | 临时读取 URL；`mode=download` 强制下载 |
+| PATCH | `/api/files/:id` | 修改展示名称 |
+| DELETE | `/api/files/:id` | 删除 OSS 文件并保留软删除记录 |
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+上传初始化请求：
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+```json
+{ "fileName": "photo.jpg", "sizeBytes": 102400, "mimeType": "image/jpeg" }
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+未配置 STS 角色时的返回值结构：
 
-## Observability
+```json
+{
+  "file": { "id": "UUID", "objectKey": "files/UUID.jpg", "status": "pending" },
+  "upload": {
+    "mode": "signed-put", "method": "PUT", "url": "https://image-sj.oss-cn-hangzhou.aliyuncs.com/staging/UUID.jpg?签名参数",
+    "headers": { "Content-Type": "image/jpeg", "x-oss-object-acl": "private" }, "expiresAt": "ISO时间",
+    "region": "oss-cn-hangzhou", "endpoint": "https://oss-cn-hangzhou.aliyuncs.com",
+    "bucket": "image-sj", "objectKey": "staging/UUID.jpg"
+  },
+  "maxFileSizeBytes": 5368709120
+}
+```
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
+前端使用 `fetch(upload.url, { method: 'PUT', headers: upload.headers, body: file })`，直接发送原始 File，不使用 FormData，不附带后端管理令牌。签名过期可用同一 file ID 续期后重新上传整个文件。
 
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
+配置角色后返回 STS 结构：
 
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
+```json
+{
+  "file": { "id": "UUID", "objectKey": "files/UUID.jpg", "status": "pending" },
+  "upload": {
+    "accessKeyId": "临时ID", "accessKeySecret": "临时Secret", "stsToken": "临时Token",
+    "mode": "sts",
+    "headers": { "x-oss-object-acl": "private" },
+    "expiresAt": "ISO时间", "region": "oss-cn-hangzhou",
+    "endpoint": "https://oss-cn-hangzhou.aliyuncs.com", "bucket": "你的Bucket",
+    "objectKey": "staging/UUID.jpg"
+  },
+  "maxFileSizeBytes": 5368709120
+}
+```
 
-## Resources
+**浏览器必须上传到 `upload.objectKey`，然后用 `file.id` 调完成接口。** `file.objectKey` 是后端最终保存路径，浏览器没有写入权限。示例见 `docs/vue-upload.ts.example`，前端安装 `ali-oss` 并配置 `/api` 开发代理到 `http://localhost:3000`。跨源调用也可以直接使用后端地址。
 
-Check out a few resources that may come in handy when working with NestJS:
+后端 HEAD 检查实际大小、Content-Type，并使用源 ETag 条件拷贝到 private 的 `files/` 对象。大于 1 GiB 的视频使用 OSS 分片拷贝，不经过应用服务器下载。源对象若在校验期间变化，完成接口返回 409，可重试。事务和行锁串行处理同一文件的完成、续期和删除。
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observer](https://observer.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+Content-Type 是对象元数据，**不是文件内容鉴定**。本版本不扫描文件内容、不提取宽高/时长、不生成封面、不转码。类型判断按 MIME；不确定类型请使用 `application/octet-stream`。STS 无法按这个实现强制限制上传字节数：前端预检和完成接口校验大小，超出声明大小的对象无法入库，可删除取消，并由生命周期兜底清理。
 
-## Support
+列表默认只返回 `ready`：
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+```text
+GET /api/files?page=1&pageSize=20&mediaType=image&search=旅行
+GET /api/files?status=pending
+PATCH /api/files/:id  { "displayName": "新的名字" }
+```
 
-## Stay in touch
+常见图片和 MP4/WebM/Ogg 视频返回 inline 预览地址；HTML、SVG 和其他类型强制下载，避免执行活动内容。实际播放能力取决于浏览器和视频编码。预览 URL 默认有效 1 小时，可通过 `PREVIEW_URL_TTL_SECONDS` 调整；长视频失效后前端需重新获取 URL 并恢复播放进度。数据库保存对象路径，不保存签名 URL。授权接口响应设置 `Cache-Control: no-store`。
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+未完成上传会话默认 24 小时过期。后台每分钟处理至多 50 条过期待上传记录或待删除记录；OSS 删除失败时保留 `deleting` 状态自动重试。完成上传的 staging 对象保留到生命周期清理，因为客户端仍可能持有有效上传授权；生命周期配置不可省略。
 
-## License
+错误响应统一为 `{ statusCode, message, path, timestamp }`。400 表示参数或上传元数据不匹配；401 未授权；404 文件不存在；409 状态冲突；429 限流；502 云端操作失败；503 OSS 尚未配置或数据库不可用。
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+## Linux 部署
+
+将代码部署到服务器，创建服务器专用 `.env`（使用独立的管理令牌和密码，修改正式 `CORS_ORIGINS`），安装 Docker Engine 和 Compose 插件：
+
+```sh
+docker compose --profile production up -d --build
+docker compose --profile production ps
+```
+
+生产配置不映射 MySQL 公网端口，后端仅绑定服务器 `127.0.0.1:3000`。使用宿主机 Nginx 做 HTTPS 反向代理，示例见 `deploy/nginx.conf.example`。Vue3 构建产物由同一 Nginx 提供。生产镜像以非 root 用户运行，关闭 Swagger，并有健康检查和日志大小限制。配置使用公网 OSS endpoint，确保浏览器能够访问返回的签名 URL。
+
+数据库卷只是持久化，不是备份。应定期使用 `mysqldump --single-transaction` 导出，并把备份放到另一台机器或专用 OSS 备份位置。升级前备份数据库；未来数据库结构变更增加新的迁移文件，不修改已经执行过的迁移。
+
+```sh
+npm run build
+npm run migration:run
+# 回滚会删除本次迁移建立的表；仅在明确需要时执行
+npm run migration:revert
+```
+
+## 验证
+
+```sh
+npm run build
+npm run lint
+npm test
+npm run test:e2e
+```
+
+单元测试覆盖上传状态、元数据校验、对象级授权、幂等完成、条件拷贝、大文件分片拷贝、删除重试等。HTTP 测试覆盖真实 Nest 请求管线的管理鉴权、参数转换、请求校验和 CORS，使用替代服务，不需要云端凭证或 MySQL。

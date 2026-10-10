@@ -1,0 +1,19 @@
+{
+  "Version": "1",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "oss:GetObject",
+        "oss:PutObject",
+        "oss:PutObjectAcl",
+        "oss:DeleteObject",
+        "oss:AbortMultipartUpload"
+      ],
+      "Resource": [
+        "acs:oss:*:*:image-sj/staging/*",
+        "acs:oss:*:*:image-sj/files/*"
+      ]
+    }
+  ]
+}

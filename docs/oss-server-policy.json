@@ -1,0 +1,24 @@
+{
+  "Version": "1",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": "acs:ram::YOUR_ACCOUNT_ID:role/YOUR_ROLE_NAME"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "oss:GetObject",
+        "oss:PutObject",
+        "oss:PutObjectAcl",
+        "oss:DeleteObject",
+        "oss:AbortMultipartUpload"
+      ],
+      "Resource": [
+        "acs:oss:*:*:YOUR_BUCKET/staging/*",
+        "acs:oss:*:*:YOUR_BUCKET/files/*"
+      ]
+    }
+  ]
+}

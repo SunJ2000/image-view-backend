@@ -6,6 +6,12 @@
 
 建议使用 Node.js 24 LTS、npm、Docker Desktop（Linux 容器模式）。
 
+本地 MySQL 从 ACR 公网仓库拉取固定版本 `8.4.11`。首次使用或换电脑后，先登录（交互输入 ACR 的 Registry 登录密码）：
+
+```sh
+docker login --username=sunj2000 crpi-v6rssvzqgx6xu67l.cn-hangzhou.personal.cr.aliyuncs.com
+```
+
 ```sh
 npm install
 npm run setup:local
@@ -133,12 +139,33 @@ PATCH /api/files/:id  { "displayName": "新的名字" }
 
 ## Linux 部署
 
-将代码部署到服务器，创建服务器专用 `.env`（使用独立的管理令牌和密码，修改正式 `CORS_ORIGINS`），安装 Docker Engine 和 Compose 插件：
+### ACR 构建与服务器运行
+
+`Dockerfile` 负责构建后端镜像，保留 Node.js 24 的多阶段构建，由 ACR 执行。ACR 构建规则使用代码仓库根目录 `/`、`Dockerfile`，输出镜像标签可设为 `main`。等待镜像构建成功后再部署。
+
+`compose.yaml` 负责运行后端和 MySQL：使用 ACR 杭州 VPC 地址，MySQL 固定为 `8.4.11`，后端标签从 `.env` 的 `BACKEND_IMAGE_TAG` 读取，未设置时默认为 `main`。标签必须是 ACR 仓库中已存在的版本；若构建输出为 `latest`，就设置 `BACKEND_IMAGE_TAG=latest`。Compose 不再配置 `build`，服务器无需拉取 Node 基础镜像或执行 npm 安装。
+
+VPC 地址用于杭州地域 VPC 网络内的服务器。如果服务器不在杭州，需将两个 `image` 的仓库域名改为对应公网域名（去掉域名中的 `-vpc`）。本地 `npm run db:up` 会合并 `compose.dev.yaml`，将 MySQL 地址覆盖为公网地址，并开放本地数据库端口。
+
+服务器安装 Docker Engine 和 Compose 插件，准备 `compose.yaml` 和服务器专用 `.env` 即可运行；可以通过 Git 拉取项目获取配置文件。创建 `.env` 时使用独立的管理令牌和密码，填写 OSS 配置，并修改正式 `CORS_ORIGINS`。在这两个文件所在目录执行：
 
 ```sh
-docker compose --profile production up -d --build
+docker login --username=sunj2000 crpi-v6rssvzqgx6xu67l-vpc.cn-hangzhou.personal.cr.aliyuncs.com
+docker compose --profile production pull
+docker compose --profile production up -d --no-build
 docker compose --profile production ps
+curl -f http://127.0.0.1:3000/api/health
 ```
+
+登录时交互输入 ACR 的 Registry 登录密码，不要写进 Git 或 Dockerfile。配置文件更新需要先同步到服务器；代码更新则先等待 ACR 构建完成，再执行以下命令更新后端：
+
+```sh
+docker compose --profile production pull backend
+docker compose --profile production up -d --no-build backend
+docker compose --profile production logs --tail=100 backend
+```
+
+### 端口与数据
 
 生产配置不映射 MySQL 公网端口，后端仅绑定服务器 `127.0.0.1:3000`。使用宿主机 Nginx 做 HTTPS 反向代理，示例见 `deploy/nginx.conf.example`。Vue3 构建产物由同一 Nginx 提供。生产镜像以非 root 用户运行，关闭 Swagger，并有健康检查和日志大小限制。配置使用公网 OSS endpoint，确保浏览器能够访问返回的签名 URL。
 

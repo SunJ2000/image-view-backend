@@ -1,7 +1,7 @@
 name: image-view
 services:
   mysql:
-    image: mysql:8.4
+    image: crpi-v6rssvzqgx6xu67l-vpc.cn-hangzhou.personal.cr.aliyuncs.com/image-view/mysql:8.4.11
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: ${DB_DATABASE:-image_view}
@@ -30,7 +30,7 @@ services:
       options: { max-size: '10m', max-file: '3' }
   backend:
     profiles: ['production']
-    build: .
+    image: crpi-v6rssvzqgx6xu67l-vpc.cn-hangzhou.personal.cr.aliyuncs.com/image-view/backend:${BACKEND_IMAGE_TAG:-main}
     restart: unless-stopped
     init: true
     env_file: .env

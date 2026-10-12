@@ -143,14 +143,14 @@ PATCH /api/files/:id  { "displayName": "新的名字" }
 
 `Dockerfile` 负责构建后端镜像，保留 Node.js 24 的多阶段构建，由 ACR 执行。ACR 构建规则使用代码仓库根目录 `/`、`Dockerfile`，输出镜像标签可设为 `main`。等待镜像构建成功后再部署。
 
-`compose.yaml` 负责运行后端和 MySQL：使用 ACR 杭州 VPC 地址，MySQL 固定为 `8.4.11`，后端标签从 `.env` 的 `BACKEND_IMAGE_TAG` 读取，未设置时默认为 `main`。标签必须是 ACR 仓库中已存在的版本；若构建输出为 `latest`，就设置 `BACKEND_IMAGE_TAG=latest`。Compose 不再配置 `build`，服务器无需拉取 Node 基础镜像或执行 npm 安装。
+`compose.yaml` 负责运行后端和 MySQL：使用 ACR 杭州公网地址，MySQL 固定为 `8.4.11`，后端标签从 `.env` 的 `BACKEND_IMAGE_TAG` 读取，未设置时默认为 `main`。标签必须是 ACR 仓库中已存在的版本；若构建输出为 `latest`，就设置 `BACKEND_IMAGE_TAG=latest`。Compose 不再配置 `build`，服务器无需拉取 Node 基础镜像或执行 npm 安装。
 
-VPC 地址用于杭州地域 VPC 网络内的服务器。如果服务器不在杭州，需将两个 `image` 的仓库域名改为对应公网域名（去掉域名中的 `-vpc`）。本地 `npm run db:up` 会合并 `compose.dev.yaml`，将 MySQL 地址覆盖为公网地址，并开放本地数据库端口。
+当前 ECS 在上海、ACR 在杭州，因此服务器使用公网地址。个人版杭州 VPC 地址仅供同地域 VPC 网络客户端使用，不能直接用于上海服务器。本地 `npm run db:up` 会合并 `compose.dev.yaml`，使用同一个公网 MySQL 镜像，并开放本地数据库端口。
 
 服务器安装 Docker Engine 和 Compose 插件，准备 `compose.yaml` 和服务器专用 `.env` 即可运行；可以通过 Git 拉取项目获取配置文件。创建 `.env` 时使用独立的管理令牌和密码，填写 OSS 配置，并修改正式 `CORS_ORIGINS`。在这两个文件所在目录执行：
 
 ```sh
-docker login --username=sunj2000 crpi-v6rssvzqgx6xu67l-vpc.cn-hangzhou.personal.cr.aliyuncs.com
+docker login --username=sunj2000 crpi-v6rssvzqgx6xu67l.cn-hangzhou.personal.cr.aliyuncs.com
 docker compose --profile production pull
 docker compose --profile production up -d --no-build
 docker compose --profile production ps

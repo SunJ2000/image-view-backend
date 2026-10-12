@@ -2,12 +2,14 @@ import {
   BadGatewayException,
   BadRequestException,
   ConflictException,
+  NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { DataSource, Repository } from 'typeorm';
 import { FilesService } from './files.service.js';
 import { FileEntity } from './file.entity.js';
 import type { OssService } from '../oss/oss.service.js';
+import { ListFilesDto, ListPublicPhotosDto } from './file.dto.js';
 
 describe('FilesService upload lifecycle', () => {
   let file: FileEntity;
@@ -18,6 +20,7 @@ describe('FilesService upload lifecycle', () => {
     create: ReturnType<typeof vi.fn>;
     findOneBy: ReturnType<typeof vi.fn>;
     find: ReturnType<typeof vi.fn>;
+    createQueryBuilder: ReturnType<typeof vi.fn>;
   };
   let cloud: {
     bucket: string;
@@ -31,6 +34,7 @@ describe('FilesService upload lifecycle', () => {
     file = Object.assign(new FileEntity(), {
       id: '38a427b2-d6ea-4d82-9848-21de8101fae1',
       status: 'pending',
+      visibility: 'private',
       bucket: 'example-bucket',
       objectKey: 'files/test.jpg',
       stagingKey: 'staging/test.jpg',
@@ -48,6 +52,7 @@ describe('FilesService upload lifecycle', () => {
       create: vi.fn().mockImplementation((value) => value),
       findOneBy: vi.fn().mockImplementation(() => file),
       find: vi.fn().mockResolvedValue([file]),
+      createQueryBuilder: vi.fn(),
     };
     const dataSource = {
       transaction: vi
@@ -189,5 +194,215 @@ describe('FilesService upload lifecycle', () => {
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(repository.save).not.toHaveBeenCalled();
+  });
+
+  it('always creates private uploads and keeps them private after completion', async () => {
+    await service.init({
+      fileName: 'photo.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: 100,
+    });
+    expect(repository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ visibility: 'private', status: 'pending' }),
+    );
+    expect((await service.complete(file.id)).visibility).toBe('private');
+  });
+
+  it('publishes a ready image and unpublishes it under the existing row lock', async () => {
+    file.status = 'ready';
+    expect(
+      (await service.updateVisibility(file.id, { visibility: 'public' }))
+        .visibility,
+    ).toBe('public');
+    expect(repository.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ lock: { mode: 'pessimistic_write' } }),
+    );
+    await service.publicPhotoDetail(file.id);
+    await service.updateVisibility(file.id, { visibility: 'private' });
+    await expect(service.publicPhotoDetail(file.id)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    await expect(
+      service.publicPhotoUrl(file.id, { mode: 'preview' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(cloud.signedUrl).not.toHaveBeenCalled();
+    expect((await service.detail(file.id)).visibility).toBe('private');
+  });
+
+  it.each([
+    { status: 'pending', mediaType: 'image' },
+    { status: 'deleting', mediaType: 'image' },
+    { status: 'deleted', mediaType: 'image' },
+    { status: 'ready', mediaType: 'video' },
+    { status: 'ready', mediaType: 'other' },
+  ] as const)(
+    'rejects publishing unavailable or non-image files: %j',
+    async (attributes) => {
+      Object.assign(file, attributes);
+      await expect(
+        service.updateVisibility(file.id, { visibility: 'public' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(repository.save).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { visibility: 'private', status: 'ready', mediaType: 'image' },
+    { visibility: 'public', status: 'pending', mediaType: 'image' },
+    { visibility: 'public', status: 'deleting', mediaType: 'image' },
+    { visibility: 'public', status: 'deleted', mediaType: 'image' },
+    { visibility: 'public', status: 'ready', mediaType: 'video' },
+    { visibility: 'public', status: 'ready', mediaType: 'other' },
+  ] as const)(
+    'hides inaccessible files from public detail and URL requests: %j',
+    async (attributes) => {
+      Object.assign(file, attributes);
+      await expect(service.publicPhotoDetail(file.id)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      await expect(
+        service.publicPhotoUrl(file.id, { mode: 'preview' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(cloud.signedUrl).not.toHaveBeenCalled();
+    },
+  );
+
+  it('returns 404 for a missing public photo without signing a URL', async () => {
+    repository.findOneBy.mockResolvedValue(null);
+    await expect(service.publicPhotoDetail(file.id)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    await expect(
+      service.publicPhotoUrl(file.id, { mode: 'preview' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(cloud.signedUrl).not.toHaveBeenCalled();
+  });
+
+  it('returns the same public error for missing, private and deleted photos', async () => {
+    for (const candidate of [
+      null,
+      file,
+      Object.assign(new FileEntity(), file, { status: 'deleted' }),
+    ]) {
+      repository.findOneBy.mockResolvedValue(candidate);
+      await expect(service.publicPhotoDetail(file.id)).rejects.toThrow(
+        'Photo not found',
+      );
+      await expect(
+        service.publicPhotoUrl(file.id, { mode: 'preview' }),
+      ).rejects.toThrow('Photo not found');
+    }
+    expect(cloud.signedUrl).not.toHaveBeenCalled();
+  });
+
+  it('exposes only display metadata and signs the checked public image', async () => {
+    file.status = 'ready';
+    file.visibility = 'public';
+    expect(await service.publicPhotoDetail(file.id)).toEqual({
+      id: file.id,
+      displayName: file.displayName,
+      mimeType: file.mimeType,
+      mediaType: file.mediaType,
+      sizeBytes: file.sizeBytes,
+      createdAt: file.createdAt,
+      updatedAt: file.updatedAt,
+    });
+    expect(
+      await service.publicPhotoUrl(file.id, { mode: 'preview' }),
+    ).toMatchObject({
+      fileId: file.id,
+      previewable: true,
+      url: 'https://example.invalid/signed',
+    });
+    expect(cloud.signedUrl).toHaveBeenCalledWith(
+      file.bucket,
+      file.objectKey,
+      file.mimeType,
+      file.displayName,
+      true,
+    );
+  });
+
+  it('keeps public SVG downloads as attachments', async () => {
+    file.status = 'ready';
+    file.visibility = 'public';
+    file.mimeType = 'image/svg+xml';
+    expect(
+      (await service.publicPhotoUrl(file.id, { mode: 'preview' })).previewable,
+    ).toBe(false);
+    expect(cloud.signedUrl).toHaveBeenCalledWith(
+      file.bucket,
+      file.objectKey,
+      file.mimeType,
+      file.displayName,
+      false,
+    );
+  });
+
+  it('public lists enforce visibility, readiness and image type and search only display names', async () => {
+    const builder = {
+      where: vi.fn().mockReturnThis(),
+      andWhere: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      addOrderBy: vi.fn().mockReturnThis(),
+      skip: vi.fn().mockReturnThis(),
+      take: vi.fn().mockReturnThis(),
+      getManyAndCount: vi.fn().mockResolvedValue([[file], 1]),
+    };
+    repository.createQueryBuilder.mockReturnValue(builder);
+    const result = await service.listPublicPhotos(
+      Object.assign(new ListPublicPhotosDto(), {
+        page: 2,
+        pageSize: 10,
+        search: 'a!%_',
+      }),
+    );
+    expect(builder.where).toHaveBeenCalledWith(
+      'file.visibility = :visibility',
+      { visibility: 'public' },
+    );
+    expect(builder.andWhere).toHaveBeenCalledWith('file.status = :status', {
+      status: 'ready',
+    });
+    expect(builder.andWhere).toHaveBeenCalledWith('file.mediaType = :type', {
+      type: 'image',
+    });
+    expect(builder.andWhere).toHaveBeenCalledWith(
+      "file.displayName LIKE :search ESCAPE '!'",
+      { search: '%a!!!%!_%' },
+    );
+    expect(builder.skip).toHaveBeenCalledWith(10);
+    expect(builder.take).toHaveBeenCalledWith(10);
+    expect(result).toMatchObject({ total: 1, page: 2, pageSize: 10 });
+    for (const key of [
+      'originalName',
+      'bucket',
+      'objectKey',
+      'stagingKey',
+      'etag',
+      'pendingExpiresAt',
+      'credentialsExpireAt',
+    ])
+      expect(result.items[0]).not.toHaveProperty(key);
+  });
+
+  it('allows administrators to filter files by visibility', async () => {
+    const builder = {
+      where: vi.fn().mockReturnThis(),
+      andWhere: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      addOrderBy: vi.fn().mockReturnThis(),
+      skip: vi.fn().mockReturnThis(),
+      take: vi.fn().mockReturnThis(),
+      getManyAndCount: vi.fn().mockResolvedValue([[file], 1]),
+    };
+    repository.createQueryBuilder.mockReturnValue(builder);
+    await service.list(
+      Object.assign(new ListFilesDto(), { visibility: 'private' }),
+    );
+    expect(builder.andWhere).toHaveBeenCalledWith(
+      'file.visibility = :visibility',
+      { visibility: 'private' },
+    );
   });
 });

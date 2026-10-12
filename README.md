@@ -1,6 +1,6 @@
 # Image View Backend
 
-个人图片、视频和通用文件库后端：NestJS + TypeScript + MySQL + 杭州 OSS。浏览器直传 OSS，后端负责授权、校验及文件信息管理。文件接口使用单个管理 Bearer Token，不包含多用户注册登录。
+个人图片、视频和通用文件库后端：NestJS + TypeScript + MySQL + 杭州 OSS。浏览器直传 OSS，后端负责授权、校验及文件信息管理。管理接口使用单个管理 Bearer Token，不包含多用户注册登录；公开图库接口允许访客匿名浏览管理员已发布的图片。
 
 ## 本地启动
 
@@ -59,7 +59,7 @@ UPLOAD_URL_TTL_SECONDS=900
 
 ## 前端接入
 
-所有文件和上传接口都需要：
+管理文件和上传接口都需要（`/api/public/photos` 下的公开接口除外）：
 
 ```http
 Authorization: Bearer <ADMIN_API_TOKEN>
@@ -75,6 +75,7 @@ Content-Type: application/json
 | GET | `/api/files/:id` | 文件详情 |
 | GET | `/api/files/:id/preview-url` | 临时读取 URL；`mode=download` 强制下载 |
 | PATCH | `/api/files/:id` | 修改展示名称 |
+| PATCH | `/api/files/:id/visibility` | 设置图片公开或文件私有 |
 | DELETE | `/api/files/:id` | 删除 OSS 文件并保留软删除记录 |
 
 上传初始化请求：
@@ -128,8 +129,41 @@ Content-Type 是对象元数据，**不是文件内容鉴定**。本版本不扫
 ```text
 GET /api/files?page=1&pageSize=20&mediaType=image&search=旅行
 GET /api/files?status=pending
+GET /api/files?visibility=private
 PATCH /api/files/:id  { "displayName": "新的名字" }
 ```
+
+### 公开图库与独立管理前端
+
+公开图库和管理后台可以使用两个独立前端仓库，共用本后端：例如 `image-view-front` 部署到主域名，`image-view-admin` 部署到 `admin` 子域名。若前端跨域请求后端，将两个前端的实际来源加入 `CORS_ORIGINS`（英文逗号分隔）；OSS Bucket CORS 也需加入管理前端的来源用于直传，以及公开前端的来源用于跨域读取。CORS 不是管理员权限验证，管理接口始终验证 Bearer Token。禁止在公开网站或任一前端的源码、构建环境 `VITE_*` 变量中预置管理令牌；管理端由管理员运行时输入。
+
+文件新增 `visibility: "private" | "public"` 字段。已有文件和新上传文件默认均为 `private`；完成上传不会自动发布。管理员调用以下接口发布或撤回：
+
+```http
+PATCH /api/files/:id/visibility
+Authorization: Bearer <ADMIN_API_TOKEN>
+Content-Type: application/json
+
+{ "visibility": "public" }
+```
+
+将 `visibility` 改为 `private` 可撤回公开。接口返回更新后的管理文件信息（包含 `visibility`）。仅 `ready` 状态的图片可发布，待上传、删除中、已删除的文件及视频、其他文件发布时返回 409；删除中和已删除的文件也不能修改可见性。现有上传、重命名、删除和预览接口保持管理员鉴权。
+
+以下接口无需令牌，仍受全局限流及 `Cache-Control: no-store` 策略约束：
+
+| 方法 | 路径 | 功能 |
+| --- | --- | --- |
+| GET | `/api/public/photos?page=1&pageSize=20&search=旅行` | 分页搜索已公开且上传完成的图片 |
+| GET | `/api/public/photos/:id` | 公开图片详情 |
+| GET | `/api/public/photos/:id/preview-url` | 公开图片临时预览 URL；支持 `mode=download` |
+
+公开列表只接受 `page`（1–1000000，默认 1）、`pageSize`（1–100，默认 20）、`search`（最长 100 字符）参数。不能通过参数改变公开、已完成、图片的筛选条件，注入 `status`、`visibility`、`mediaType` 等参数返回 400。搜索仅匹配展示名称，按创建时间和 ID 降序排列。
+
+列表返回 `{ items, total, page, pageSize }`，每条图片以及详情只包含 `id, displayName, mimeType, mediaType, sizeBytes, createdAt, updatedAt`，不公开原始名称、Bucket、对象路径、ETag 或上传会话信息。私有、未完成、删除中、已删除、非图片以及不存在的 ID，公开详情和预览接口均返回 404。预览地址接口返回 `{ fileId, previewable, url, expiresAt, disposition }`，前端按需获取并在过期后重新获取。SVG 等不支持安全内联预览的格式保持强制下载，前端可根据 `previewable` 展示下载入口。
+
+OSS Bucket 和对象 ACL 继续保持 private；网站层面的公开状态不改变 OSS ACL。撤回公开后无法再申请新的公开预览 URL，但已经签发的 URL 在过期前仍可能可用（默认 1 小时），已下载的副本也无法撤回。
+
+本次新增迁移 `AddFileVisibility1791763200000`，为已有记录设置私有默认值并建立图库索引，不修改初始建表迁移。部署新版本后，应用启动时自动执行尚未运行的迁移；升级前备份数据库。回滚该迁移会丢弃公开/私有设置。
 
 常见图片和 MP4/WebM/Ogg 视频返回 inline 预览地址；HTML、SVG 和其他类型强制下载，避免执行活动内容。实际播放能力取决于浏览器和视频编码。预览 URL 默认有效 1 小时，可通过 `PREVIEW_URL_TTL_SECONDS` 调整；长视频失效后前端需重新获取 URL 并恢复播放进度。数据库保存对象路径，不保存签名 URL。授权接口响应设置 `Cache-Control: no-store`。
 
@@ -187,4 +221,4 @@ npm test
 npm run test:e2e
 ```
 
-单元测试覆盖上传状态、元数据校验、对象级授权、幂等完成、条件拷贝、大文件分片拷贝、删除重试等。HTTP 测试覆盖真实 Nest 请求管线的管理鉴权、参数转换、请求校验和 CORS，使用替代服务，不需要云端凭证或 MySQL。
+单元测试覆盖上传状态、元数据校验、对象级授权、幂等完成、条件拷贝、大文件分片拷贝、删除重试，以及公开状态切换、公开列表约束和私有图片访问隔离。HTTP 测试覆盖真实 Nest 请求管线的管理鉴权、匿名公开访问、参数转换、请求校验和 CORS，使用替代服务，不需要云端凭证或 MySQL。

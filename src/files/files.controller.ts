@@ -17,8 +17,11 @@ import {
   FileUrlDto,
   InitUploadDto,
   ListFilesDto,
+  ListPublicPhotosDto,
   RenameFileDto,
+  UpdateVisibilityDto,
 } from './file.dto.js';
+import { Public } from '../auth/admin-auth.guard.js';
 
 @ApiTags('uploads')
 @ApiBearerAuth()
@@ -87,5 +90,43 @@ export class FilesController {
   @Delete(':id')
   remove(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     return this.files.remove(id);
+  }
+
+  @Patch(':id/visibility')
+  @ApiOperation({ summary: 'Publish a ready image or make a file private' })
+  visibility(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: UpdateVisibilityDto,
+  ) {
+    return this.files.updateVisibility(id, dto);
+  }
+}
+
+@ApiTags('public photos')
+@Public()
+@Controller('public/photos')
+export class PublicPhotosController {
+  constructor(private readonly files: FilesService) {}
+
+  @Get()
+  @ApiOperation({
+    summary: 'List published images without administrator credentials',
+  })
+  list(@Query() query: ListPublicPhotosDto) {
+    return this.files.listPublicPhotos(query);
+  }
+
+  @Get(':id')
+  detail(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    return this.files.publicPhotoDetail(id);
+  }
+
+  @Get(':id/preview-url')
+  @ApiOperation({ summary: 'Get a temporary URL for a published image' })
+  url(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Query() query: FileUrlDto,
+  ) {
+    return this.files.publicPhotoUrl(id, query);
   }
 }

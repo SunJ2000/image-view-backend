@@ -12,7 +12,7 @@ import {
   Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import type { FileStatus, MediaType } from './file.entity.js';
+import type { FileStatus, FileVisibility, MediaType } from './file.entity.js';
 
 export class InitUploadDto {
   @ApiProperty({ example: 'photo.jpg' })
@@ -47,7 +47,7 @@ export class InitUploadDto {
   mimeType: string;
 }
 
-export class ListFilesDto {
+export class ListPublicPhotosDto {
   @ApiPropertyOptional({ default: 1 })
   @Type(() => Number)
   @IsInt()
@@ -65,6 +65,13 @@ export class ListFilesDto {
   @IsString()
   @MaxLength(100)
   search?: string;
+}
+
+export class ListFilesDto extends ListPublicPhotosDto {
+  @ApiPropertyOptional({ enum: ['private', 'public'] })
+  @IsOptional()
+  @IsIn(['private', 'public'])
+  visibility?: FileVisibility;
   @ApiPropertyOptional({ enum: ['image', 'video', 'other'] })
   @IsOptional()
   @IsIn(['image', 'video', 'other'])
@@ -87,6 +94,12 @@ export class RenameFileDto {
     typeof value === 'string' ? value.trim() : value,
   )
   displayName: string;
+}
+
+export class UpdateVisibilityDto {
+  @ApiProperty({ enum: ['private', 'public'] })
+  @IsIn(['private', 'public'])
+  visibility: FileVisibility;
 }
 
 export class FileUrlDto {

@@ -14,7 +14,9 @@ import type {
   FileUrlDto,
   InitUploadDto,
   ListFilesDto,
+  ListPublicPhotosDto,
   RenameFileDto,
+  UpdateVisibilityDto,
 } from './file.dto.js';
 
 export function fileView(file: FileEntity) {
@@ -28,10 +30,23 @@ export function fileView(file: FileEntity) {
     mediaType: file.mediaType,
     sizeBytes: file.sizeBytes,
     status: file.status,
+    visibility: file.visibility,
     etag: file.etag,
     createdAt: file.createdAt,
     updatedAt: file.updatedAt,
     pendingExpiresAt: file.status === 'pending' ? file.pendingExpiresAt : null,
+  };
+}
+
+export function publicPhotoView(file: FileEntity) {
+  return {
+    id: file.id,
+    displayName: file.displayName,
+    mimeType: file.mimeType,
+    mediaType: file.mediaType,
+    sizeBytes: file.sizeBytes,
+    createdAt: file.createdAt,
+    updatedAt: file.updatedAt,
   };
 }
 
@@ -66,6 +81,7 @@ export class FilesService {
           : 'other',
       sizeBytes: dto.sizeBytes,
       status: 'pending',
+      visibility: 'private',
       etag: null,
       deletedAt: null,
       credentialsExpireAt: null,
@@ -169,6 +185,10 @@ export class FilesService {
       .where('file.status = :status', { status: query.status });
     if (query.mediaType)
       builder.andWhere('file.mediaType = :type', { type: query.mediaType });
+    if (query.visibility)
+      builder.andWhere('file.visibility = :visibility', {
+        visibility: query.visibility,
+      });
     if (query.search)
       builder.andWhere(
         "(file.displayName LIKE :search ESCAPE '!' OR file.originalName LIKE :search ESCAPE '!')",
@@ -199,6 +219,67 @@ export class FilesService {
     return fileView(await this.get(id));
   }
 
+  async listPublicPhotos(query: ListPublicPhotosDto) {
+    const builder = this.files
+      .createQueryBuilder('file')
+      .where('file.visibility = :visibility', { visibility: 'public' })
+      .andWhere('file.status = :status', { status: 'ready' })
+      .andWhere('file.mediaType = :type', { type: 'image' });
+    if (query.search)
+      builder.andWhere("file.displayName LIKE :search ESCAPE '!'", {
+        search: `%${query.search.replace(/[!%_]/g, '!$&')}%`,
+      });
+    const [items, total] = await builder
+      .orderBy('file.createdAt', 'DESC')
+      .addOrderBy('file.id', 'DESC')
+      .skip((query.page - 1) * query.pageSize)
+      .take(query.pageSize)
+      .getManyAndCount();
+    return {
+      items: items.map(publicPhotoView),
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
+    };
+  }
+
+  private async getPublicPhoto(id: string) {
+    const file = await this.files.findOneBy({ id });
+    if (
+      !file ||
+      file.visibility !== 'public' ||
+      file.status !== 'ready' ||
+      file.mediaType !== 'image'
+    )
+      throw new NotFoundException('Photo not found');
+    return file;
+  }
+
+  async publicPhotoDetail(id: string) {
+    return publicPhotoView(await this.getPublicPhoto(id));
+  }
+
+  async publicPhotoUrl(id: string, query: FileUrlDto) {
+    return this.signFileUrl(await this.getPublicPhoto(id), query);
+  }
+
+  async updateVisibility(id: string, dto: UpdateVisibilityDto) {
+    return this.locked(id, async (file, repository) => {
+      if (file.status !== 'pending' && file.status !== 'ready')
+        throw new ConflictException(
+          'File visibility cannot be changed in its current state',
+        );
+      if (
+        dto.visibility === 'public' &&
+        (file.status !== 'ready' || file.mediaType !== 'image')
+      )
+        throw new ConflictException('Only ready images can be published');
+      file.visibility = dto.visibility;
+      await repository.save(file);
+      return fileView(file);
+    });
+  }
+
   async rename(id: string, dto: RenameFileDto) {
     return this.locked(id, async (file, repository) => {
       if (file.status !== 'pending' && file.status !== 'ready')
@@ -217,6 +298,10 @@ export class FilesService {
       throw new ConflictException(
         'File is not available for preview or download',
       );
+    return this.signFileUrl(file, query);
+  }
+
+  private async signFileUrl(file: FileEntity, query: FileUrlDto) {
     // HTML, SVG and unknown formats are downloaded rather than executed in the browser.
     const previewable =
       /^(image\/(jpeg|png|gif|webp|avif|bmp)|video\/(mp4|webm|ogg))$/.test(

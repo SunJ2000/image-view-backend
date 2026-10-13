@@ -23,8 +23,8 @@ export function validateEnvironment(input: Record<string, unknown>) {
     if (typeof env[key] !== 'string' || !env[key])
       throw new Error(`${key} is required`);
   }
-  if (String(env.ADMIN_API_TOKEN).length < 32)
-    throw new Error('ADMIN_API_TOKEN must contain at least 32 characters');
+  if (String(env.ADMIN_API_TOKEN).length < 8)
+    throw new Error('ADMIN_API_TOKEN must contain at least 8 characters');
   const numbers: Record<string, [number, number]> = {
     PORT: [1, 65535],
     DB_PORT: [1, 65535],

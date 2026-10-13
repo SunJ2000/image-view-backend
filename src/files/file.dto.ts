@@ -45,6 +45,16 @@ export class InitUploadDto {
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
   mimeType: string;
+
+  @ApiProperty({ example: '旅行', maxLength: 64 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  @Matches(/^[^\x00-\x1f\x7f/\\]*$/)
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  category: string;
 }
 
 export class ListPublicPhotosDto {
@@ -65,6 +75,15 @@ export class ListPublicPhotosDto {
   @IsString()
   @MaxLength(100)
   search?: string;
+  @ApiPropertyOptional({ example: '旅行', maxLength: 64 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  @Matches(/^[^\x00-\x1f\x7f/\\]*$/)
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  category?: string;
 }
 
 export class ListFilesDto extends ListPublicPhotosDto {

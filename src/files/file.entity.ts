@@ -34,6 +34,7 @@ export class FileEntity {
   @Column({ type: 'varchar', length: 512, unique: true }) stagingKey: string;
   @Column({ type: 'varchar', length: 127 }) mimeType: string;
   @Column({ type: 'varchar', length: 10 }) mediaType: MediaType;
+  @Column({ type: 'varchar', length: 64, default: '随手' }) category: string;
   @Column({ type: 'bigint', transformer: bigintTransformer }) sizeBytes: number;
   @Column({ type: 'varchar', length: 10, default: 'pending' })
   status: FileStatus;

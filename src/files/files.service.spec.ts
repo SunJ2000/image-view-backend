@@ -42,6 +42,7 @@ describe('FilesService upload lifecycle', () => {
       displayName: 'test.jpg',
       mimeType: 'image/jpeg',
       mediaType: 'image',
+      category: '随手',
       sizeBytes: 100,
       etag: null,
       pendingExpiresAt: new Date(Date.now() + 86400000),
@@ -191,6 +192,7 @@ describe('FilesService upload lifecycle', () => {
         fileName: 'huge.mp4',
         mimeType: 'video/mp4',
         sizeBytes: 5368709121,
+        category: '随手',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(repository.save).not.toHaveBeenCalled();
@@ -201,6 +203,7 @@ describe('FilesService upload lifecycle', () => {
       fileName: 'photo.jpg',
       mimeType: 'image/jpeg',
       sizeBytes: 100,
+      category: '随手',
     });
     expect(repository.create).toHaveBeenCalledWith(
       expect.objectContaining({ visibility: 'private', status: 'pending' }),
@@ -303,6 +306,7 @@ describe('FilesService upload lifecycle', () => {
       displayName: file.displayName,
       mimeType: file.mimeType,
       mediaType: file.mediaType,
+      category: file.category,
       sizeBytes: file.sizeBytes,
       createdAt: file.createdAt,
       updatedAt: file.updatedAt,

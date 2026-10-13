@@ -121,10 +121,19 @@ describe('HTTP authentication and validation', () => {
     const result = await request(app.getHttpServer())
       .post('/api/uploads/init')
       .set('Authorization', `Bearer ${token}`)
-      .send({ fileName: 'photo.jpg', sizeBytes: 100, mimeType: 'image/jpeg' })
+      .send({
+        fileName: 'photo.jpg',
+        sizeBytes: 100,
+        mimeType: 'image/jpeg',
+        category: '随手',
+      })
       .expect(201);
     expect(files.init).toHaveBeenCalledWith(
-      expect.objectContaining({ fileName: 'photo.jpg', sizeBytes: 100 }),
+      expect.objectContaining({
+        fileName: 'photo.jpg',
+        sizeBytes: 100,
+        category: '随手',
+      }),
     );
     expect(result.headers['cache-control']).toBe('no-store');
   });

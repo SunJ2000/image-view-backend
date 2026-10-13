@@ -28,6 +28,7 @@ export function fileView(file: FileEntity) {
     objectKey: file.objectKey,
     mimeType: file.mimeType,
     mediaType: file.mediaType,
+    category: file.category || '随手',
     sizeBytes: file.sizeBytes,
     status: file.status,
     visibility: file.visibility,
@@ -44,6 +45,7 @@ export function publicPhotoView(file: FileEntity) {
     displayName: file.displayName,
     mimeType: file.mimeType,
     mediaType: file.mediaType,
+    category: file.category || '随手',
     sizeBytes: file.sizeBytes,
     createdAt: file.createdAt,
     updatedAt: file.updatedAt,
@@ -74,6 +76,7 @@ export class FilesService {
       stagingKey: `staging/${id}${extension}`,
       objectKey: `files/${id}${extension}`,
       mimeType: dto.mimeType,
+      category: dto.category,
       mediaType: dto.mimeType.startsWith('image/')
         ? 'image'
         : dto.mimeType.startsWith('video/')
@@ -194,6 +197,8 @@ export class FilesService {
         "(file.displayName LIKE :search ESCAPE '!' OR file.originalName LIKE :search ESCAPE '!')",
         { search: `%${query.search.replace(/[!%_]/g, '!$&')}%` },
       );
+    if (query.category)
+      builder.andWhere('file.category = :category', { category: query.category });
     const [items, total] = await builder
       .orderBy('file.createdAt', 'DESC')
       .addOrderBy('file.id', 'DESC')
@@ -229,6 +234,8 @@ export class FilesService {
       builder.andWhere("file.displayName LIKE :search ESCAPE '!'", {
         search: `%${query.search.replace(/[!%_]/g, '!$&')}%`,
       });
+    if (query.category)
+      builder.andWhere('file.category = :category', { category: query.category });
     const [items, total] = await builder
       .orderBy('file.createdAt', 'DESC')
       .addOrderBy('file.id', 'DESC')
